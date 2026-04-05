@@ -171,7 +171,7 @@
       </div>
 
       <div class="btns" id="startBar">
-        <button id="startBtn" class="primary">Start game</button>
+        <button id="startBtn" class="primary">Start Game</button>
       </div>
 
       <div>
@@ -1573,13 +1573,13 @@
     if (e.code === 'ArrowUp') {
       if (!missile?.launched) {
         const step = e.repeat ? 5 : 1;
-        angleDeg = clamp(Math.round(angleDeg) + step, 10, 70);
+        angleDeg = clamp(Math.round(angleDeg) + step, 10, 75);
         updateAngleLabels();
       }
     } else if (e.code === 'ArrowDown') {
       if (!missile?.launched) {
         const step = e.repeat ? 5 : 1;
-        angleDeg = clamp(Math.round(angleDeg) - step, 10, 70);
+        angleDeg = clamp(Math.round(angleDeg) - step, 10, 75);
         updateAngleLabels();
       }
     } else if (e.code === 'Space') {
