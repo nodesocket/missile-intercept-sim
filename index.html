@@ -369,6 +369,8 @@
       speed,
       altitude,
       timeToOverheadFromSpawn,
+      /** When non-null (after a hit), HUD uses this instead of live countdown. */
+      timeToOverheadFrozen: null,
       destroyed: false,
       crashing: false,
       crashVx: 0,
@@ -548,7 +550,10 @@
       }
     }
 
-    const tOver = plane.timeToOverheadFromSpawn - simTime;
+    const tOver =
+      plane.timeToOverheadFrozen != null
+        ? plane.timeToOverheadFrozen
+        : plane.timeToOverheadFromSpawn - simTime;
     timeToOverheadEl.textContent = `${tOver >= 0 ? '' : '-'}${fmt(Math.abs(tOver), 1)} s`;
 
     if (missile.active) {
@@ -581,6 +586,7 @@
 
       if (hit) {
         deactivateMissile();
+        plane.timeToOverheadFrozen = plane.timeToOverheadFromSpawn - simTime;
         plane.destroyed = true;
         plane.crashing = true;
         plane.crashVx = plane.speed * 0.62;
@@ -1519,7 +1525,11 @@
     ctx.fillRect(12, 12, 288, 86);
     ctx.fillStyle = 'white';
     ctx.font = '13px ui-monospace, monospace';
-    const tOver = plane ? plane.timeToOverheadFromSpawn - simTime : 0;
+    const tOver = plane
+      ? plane.timeToOverheadFrozen != null
+        ? plane.timeToOverheadFrozen
+        : plane.timeToOverheadFromSpawn - simTime
+      : 0;
     let flightLabel = '—';
     if (missile?.launched && missile.launchTime != null) {
       if (missile.active) {
