@@ -1,4 +1,4 @@
-# Missle Intercept Sim
+# Missile Intercept Sim
 
 A HTML/Canvas/JavaScript missile intercept simulation game.
 
