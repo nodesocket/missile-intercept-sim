@@ -153,8 +153,8 @@
 <div class="wrap">
   <h1>Missile Intercept Sim</h1>
   <p class="desc">
-    Random jets appear one at a time between <strong>10,000 and 40,000 ft</strong> and between <strong>Mach 0.6 and Mach 2</strong>.
-    Your missile always flies in a straight line at constant <strong>Mach 2</strong>. Use the keyboard to aim and fire.
+    Random jets appear one at a time between <strong>10,000 and 40,000 ft</strong> and between <strong>Mach 0.6 and Mach 1.8</strong>.
+    Jets may deploy random <strong>chaff</strong> when your missile gets close. Your missile always flies in a straight line at constant <strong>Mach 2</strong>. Use the keyboard to aim and fire.
   </p>
 
   <div class="layout">
@@ -162,7 +162,7 @@
       <div class="control-card">
         <h2>Aim controls</h2>
         <div class="big-angle" id="angleValue">60°</div>
-        <div class="small">Use <strong>↑</strong> and <strong>↓</strong> to change the missile angle <strong>before firing</strong> (aim locks after launch). Each tap moves <strong>1°</strong>; hold the key for <strong>5°</strong> steps. Press <strong>Space</strong> to fire.</div>
+        <div class="small">Use <strong>↑</strong> and <strong>↓</strong> to change the missile angle at any time. Each tap moves <strong>1°</strong>; hold the key for <strong>5°</strong> steps. Press <strong>Space</strong> to fire.</div>
         <div class="key-row">
           <div class="key">↑</div>
           <div class="key">↓</div>
@@ -203,6 +203,10 @@
   const SPEED_OF_SOUND_FTPS = 1116;
   const MISSILE_SPEED = 2 * SPEED_OF_SOUND_FTPS;
   const HIT_RADIUS_FT = 800;
+  const CHAFF_TRIGGER_RADIUS_FT = 4200;
+  const CHAFF_EFFECTIVENESS = 0.30;
+  const CHAFF_DECOY_DELAY_MS = 520;
+  const CHAFF_TIME_SCALE = 0.3;
   const MISSILE_SELF_DESTRUCT_FT = 50000;
   const MISSILE_TRAIL_MAX_POINTS = 90;
   const PLANE_DRAW_SCALE = 1.1 * 0.7 * 1.1;
@@ -210,6 +214,7 @@
   const PLANE_RIGHT_EXTENT_PX = Math.ceil(45 * PLANE_DRAW_SCALE);
   /** Wall-clock delays before spawnPlane so explosions / wreck can play (ms). */
   const RESPAWN_AFTER_HIT_MS = 3200;
+  const RESPAWN_AFTER_CHAFF_DECOY_MS = 1400;
   const RESPAWN_AFTER_SELF_DESTRUCT_MS = 1400;
   const RESPAWN_AFTER_MISSILE_OOB_MS = 1100;
   const RESPAWN_AFTER_PLANE_ESCAPED_MS = 500;
@@ -246,6 +251,10 @@
   let outcomeResolved = false;
   let angleDeg = 60;
   let explosions = [];
+  let chaffBursts = [];
+  let chaffInterceptTooltipUntilMs = 0;
+  let chaffInterceptTooltipX = 0;
+  let chaffInterceptTooltipY = 0;
   /** When `performance.now()` reaches this, call spawnPlane (wall clock, not sim time). */
   let autoRespawnAtMs = null;
   const SIM_SPEED_MULTIPLIER = 28;
@@ -355,7 +364,7 @@
   function spawnPlane() {
     autoRespawnAtMs = null;
     const altitude = Math.round(randomRange(10000, 40000) / 100) * 100;
-    const mach = Math.round(randomRange(0.6, 2) * 10) / 10;
+    const mach = Math.round(randomRange(0.6, 1.8) * 10) / 10;
     const speed = mach * SPEED_OF_SOUND_FTPS;
     const spawnX = 6000;
     const distanceToOverhead = world.launcherX - spawnX;
@@ -371,6 +380,9 @@
       timeToOverheadFromSpawn,
       /** When non-null (after a hit), HUD uses this instead of live countdown. */
       timeToOverheadFrozen: null,
+      chaffUsed: false,
+      chaffWillDecoy: false,
+      chaffDecoyAtMs: 0,
       destroyed: false,
       crashing: false,
       crashVx: 0,
@@ -403,6 +415,10 @@
     outcomeResolved = false;
     roundActive = true;
     explosions = [];
+    chaffBursts = [];
+    chaffInterceptTooltipUntilMs = 0;
+    chaffInterceptTooltipX = 0;
+    chaffInterceptTooltipY = 0;
 
     planeAltEl.textContent = `${plane.altitude.toLocaleString()} ft`;
     planeMachEl.textContent = `Mach ${fmt(plane.mach, 1)}`;
@@ -450,23 +466,48 @@
   }
 
   function createExplosion(x, y, kind = 'small') {
-    const count = kind === 'big' ? 28 : 16;
+    const count = kind === 'big' ? 28 : (kind === 'tiny' ? 10 : 16);
     const particles = [];
     for (let i = 0; i < count; i++) {
-      const speed = (kind === 'big' ? 1600 : 900) * (0.45 + Math.random());
+      const speed = (kind === 'big' ? 1600 : (kind === 'tiny' ? 560 : 900)) * (0.45 + Math.random());
       const ang = Math.random() * Math.PI * 2;
       particles.push({
         x,
         y,
         vx: Math.cos(ang) * speed,
         vy: Math.sin(ang) * speed,
-        size: (kind === 'big' ? 1500 : 900) * (0.5 + Math.random()),
-        life: 0.85 + Math.random() * (kind === 'big' ? 0.7 : 0.35),
-        maxLife: 0.85 + Math.random() * (kind === 'big' ? 0.7 : 0.35),
+        size: (kind === 'big' ? 1500 : (kind === 'tiny' ? 520 : 900)) * (0.5 + Math.random()),
+        life: 0.85 + Math.random() * (kind === 'big' ? 0.7 : (kind === 'tiny' ? 0.18 : 0.35)),
+        maxLife: 0.85 + Math.random() * (kind === 'big' ? 0.7 : (kind === 'tiny' ? 0.18 : 0.35)),
         hue: Math.random()
       });
     }
-    explosions.push({ x, y, age: 0, life: kind === 'big' ? 1.2 : 0.75, radius: kind === 'big' ? 3400 : 1800, kind, particles });
+    explosions.push({
+      x,
+      y,
+      age: 0,
+      life: kind === 'big' ? 1.2 : (kind === 'tiny' ? 0.52 : 0.75),
+      radius: kind === 'big' ? 3400 : (kind === 'tiny' ? 980 : 1800),
+      kind,
+      particles
+    });
+  }
+
+  function createChaffBurst(x, y) {
+    const particles = [];
+    for (let i = 0; i < 96; i++) {
+      const life = randomRange(3.2, 5.2);
+      particles.push({
+        x: x + randomRange(-170, 110),
+        y: y + randomRange(-40, 35),
+        vx: randomRange(-55, 22),
+        vy: randomRange(-290, -150),
+        life,
+        maxLife: life,
+        size: randomRange(240, 680)
+      });
+    }
+    chaffBursts.push({ age: 0, life: 5.6, particles });
   }
 
   function resolveRound(hit) {
@@ -578,13 +619,67 @@
     }
     explosions = explosions.filter(ex => ex.age < ex.life || ex.particles.length);
 
-    if (!plane.destroyed && missile.active) {
-      const hit = missileHitsPlaneBody(
-        missile.prevX, missile.prevY, missile.x, missile.y,
-        plane.prevX, plane.prevY, plane.x, plane.y
-      );
+    for (const burst of chaffBursts) {
+      const cdt = dt * CHAFF_TIME_SCALE;
+      burst.age += cdt;
+      for (const pt of burst.particles) {
+        pt.life -= cdt;
+        pt.x += pt.vx * cdt;
+        pt.y += pt.vy * cdt;
+        pt.vx *= (1 - 0.13 * cdt);
+        pt.vy *= (1 - 0.05 * cdt);
+        pt.vy -= 120 * cdt;
+      }
+      burst.particles = burst.particles.filter(pt => pt.life > 0);
+    }
+    chaffBursts = chaffBursts.filter(burst => burst.age < burst.life || burst.particles.length);
 
-      if (hit) {
+    if (plane.chaffWillDecoy) {
+      if (!missile.active) {
+        plane.chaffWillDecoy = false;
+      } else if (performance.now() >= plane.chaffDecoyAtMs) {
+        plane.chaffWillDecoy = false;
+        const stillInChaffEnvelope = Math.hypot(missile.x - plane.x, missile.y - plane.y) <= CHAFF_TRIGGER_RADIUS_FT * 1.15;
+        if (stillInChaffEnvelope) {
+          createChaffBurst(plane.x - 120, plane.y - 80);
+          deactivateMissile();
+          createExplosion(missile.x, missile.y, 'tiny');
+          chaffInterceptTooltipUntilMs = performance.now() + 2200;
+          missileStateEl.textContent = 'Decoyed';
+          setStatus('Jet deployed chaff. Missile lost lock, exploded, and this counts as a miss.', 'bad');
+          resolveRound(false);
+          scheduleRespawn(RESPAWN_AFTER_CHAFF_DECOY_MS);
+        } else {
+          setStatus('Jet deployed chaff, but the missile stayed on track.', 'warn');
+        }
+      }
+    }
+
+    const missileWouldHitNow = !plane.destroyed && missile.active && missileHitsPlaneBody(
+      missile.prevX, missile.prevY, missile.x, missile.y,
+      plane.prevX, plane.prevY, plane.x, plane.y
+    );
+
+    if (!plane.destroyed && missile.active && !plane.chaffUsed && !missileWouldHitNow) {
+      if (Math.hypot(missile.x - plane.x, missile.y - plane.y) <= CHAFF_TRIGGER_RADIUS_FT) {
+        plane.chaffUsed = true;
+        if (Math.random() < CHAFF_EFFECTIVENESS) {
+          createChaffBurst(plane.x - 120, plane.y - 80);
+          plane.chaffWillDecoy = true;
+          plane.chaffDecoyAtMs = performance.now() + CHAFF_DECOY_DELAY_MS;
+          chaffInterceptTooltipX = plane.x;
+          chaffInterceptTooltipY = plane.y;
+          chaffInterceptTooltipUntilMs = performance.now() + 2600;
+          setStatus('Jet deployed chaff. Missile tracking is being disrupted...', 'warn');
+        } else {
+          setStatus('Jet deployed chaff, but missile tracking held.', 'warn');
+        }
+      }
+    }
+
+    if (!plane.destroyed && missile.active && !plane.chaffWillDecoy) {
+      if (missileWouldHitNow) {
+        plane.chaffWillDecoy = false;
         deactivateMissile();
         plane.timeToOverheadFrozen = plane.timeToOverheadFromSpawn - simTime;
         plane.destroyed = true;
@@ -981,6 +1076,28 @@
     ctx.restore();
   }
 
+  function drawChaffInterceptTooltip() {
+    if (performance.now() > chaffInterceptTooltipUntilMs) return;
+    const text = 'CHAFF INTERCEPT';
+    const boxHeight = 24;
+    ctx.save();
+    ctx.font = '12px system-ui';
+    const boxWidth = ctx.measureText(text).width + 18;
+    const boxX = (canvas.width - boxWidth) / 2;
+    const boxY = 18;
+    ctx.fillStyle = 'rgba(245, 158, 11, 0.95)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 7);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(17,24,39,0.98)';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, boxX + boxWidth / 2, boxY + 16);
+    ctx.restore();
+  }
+
   function drawPlane() {
     if (!plane) return;
     const x = toCanvasX(plane.x);
@@ -1291,6 +1408,30 @@
     }
   }
 
+  function drawChaffBursts() {
+    for (const burst of chaffBursts) {
+      for (const pt of burst.particles) {
+        const lifeFrac = pt.life / pt.maxLife;
+        const x = toCanvasX(pt.x);
+        const y = toCanvasY(pt.y);
+        const r = Math.max(1.8, (pt.size / world.widthFt) * canvas.width * (1.05 + 0.7 * lifeFrac));
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = Math.min(1, 0.42 + lifeFrac * 0.85);
+        ctx.fillStyle = lifeFrac > 0.55 ? 'rgba(255,255,255,1)' : 'rgba(220,236,248,0.95)';
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = Math.min(1, 0.15 + lifeFrac * 0.4);
+        ctx.fillStyle = 'rgba(245,250,255,0.85)';
+        ctx.beginPath();
+        ctx.arc(x, y, r * 2.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+  }
+
   function drawMissile() {
     if (!missile || !missile.launched || !missile.active) return;
 
@@ -1553,8 +1694,10 @@
     drawLauncher();
     drawPlane();
     drawMissile();
+    drawChaffBursts();
     drawExplosions();
     drawHUD();
+    drawChaffInterceptTooltip();
   }
 
   function tick(now) {
@@ -1571,17 +1714,13 @@
     }
 
     if (e.code === 'ArrowUp') {
-      if (!missile?.launched) {
-        const step = e.repeat ? 5 : 1;
-        angleDeg = clamp(Math.round(angleDeg) + step, 10, 75);
-        updateAngleLabels();
-      }
+      const step = e.repeat ? 5 : 1;
+      angleDeg = clamp(Math.round(angleDeg) + step, 10, 75);
+      updateAngleLabels();
     } else if (e.code === 'ArrowDown') {
-      if (!missile?.launched) {
-        const step = e.repeat ? 5 : 1;
-        angleDeg = clamp(Math.round(angleDeg) - step, 10, 75);
-        updateAngleLabels();
-      }
+      const step = e.repeat ? 5 : 1;
+      angleDeg = clamp(Math.round(angleDeg) - step, 10, 75);
+      updateAngleLabels();
     } else if (e.code === 'Space') {
       launchMissile();
     }
